@@ -1,0 +1,1 @@
+This repository contains code to (1) classify Sylvester-Gallai configurations up to 16 points, and (2) classify which of those configurations are embeddable in the complex plane. The classification follows a similar appraoch to that of Kaski & Ostergard in their study of Steiner triple systems, and the classification of embeddings uses Grobner bases. 
