@@ -1,5 +1,9 @@
+# This very nice implementation of Knuth's algorithm X is due to Ali Assaf
+# https://www.cs.mcgill.ca/~aassaf9/python/algorithm_x.html
+
 import copy 
 
+# find all set covers of 
 def solve(X, Y, solution=[]):
     if not X:
         yield list(solution)
@@ -31,7 +35,7 @@ def deselect(X, Y, r, cols):
                 if k != j:
                     X[k].add(i)
 
-# X is the underlying set, Y0 is the dictionary of underlying
+# X is the underlying set, Y0 is the dictionary of sets to be chosen from
 def make_inputs(X0, Y0):
     X1 = {j: set() for j in X0}
     for i in Y0:

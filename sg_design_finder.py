@@ -5,6 +5,8 @@ import pynauty
 import itertools
 import numpy as np
 import copy
+from solve_exact_cover import *
+import dill
 
 """
 PartialDesign class for recording point-line designs
@@ -106,10 +108,41 @@ def make_bipartite_for_design(pd):
 
     return g
 
+def make_bipartite_for_design_linelist(num_points, line_list):
+    # we have num points + num lines vertices
+    # first are the points, then then lines
+    # the points have color 0 and lines have color 1
+    num_lines = len(line_list)
+    num_vert = num_points + num_lines
+    # different colors for lines and for points of each pencil type
+    lineset = set(range(num_points, num_vert))
+    coloring = [set(range(num_points)), set(range(num_points,num_vert))]
+    
+    adj_dict = {}
+    for i in range(num_vert):
+        adj_dict[i] = []
+    for li, line in enumerate(line_list):
+        line_ind = num_points + li
+        for p in line:
+            adj_dict[line_ind].append(p)
+            adj_dict[p].append(line_ind)
+
+    g = pynauty.Graph(number_of_vertices = num_vert, \
+        directed = False, \
+        adjacency_dict = adj_dict, \
+        vertex_coloring = coloring)
+
+    return g
+
 # creates a unique identifier has for a partial design
 # used for isomorphism testing
 def make_identifier_hash(pd):
     return pynauty.certificate(make_bipartite_for_design(pd))
+
+
+def make_identifier_hash_linelist(npoints, line_list):
+    return pynauty.certificate(make_bipartite_for_design_linelist(npoints, line_list))
+
 
 """
 make a list containing all possible lines in n vertices, up to length maxlen
@@ -152,7 +185,10 @@ Finds all nonisomorphic ways to add all lines through some initial set of points
  - initial_len: length of line to find seeds from. 
  - All lines will have at least this length
 """
-def find_all_seeds(npoints, maxlen, initial_len, pt_up_to, verbose=True):
+def find_all_seeds(npoints, initial_len, pt_up_to, verbose=True):
+    min_line_len = initial_len
+    maxlen = npoints//2 + 1
+
     if verbose: 
         print(("Finding all seeds: npoints = {}, maxlen = {}, " + 
             "initial_len = {}").format(npoints, maxlen, initial_len))
@@ -162,7 +198,7 @@ def find_all_seeds(npoints, maxlen, initial_len, pt_up_to, verbose=True):
     initial_line = range(initial_len)
     if verbose: print("Finished intializing")
 
-    min_line_len = initial_len
+    
 
     # base partial design, consisting of only the base line
     base_pd = PartialDesign(npoints, [initial_line]) 
@@ -280,12 +316,188 @@ def find_all_seeds(npoints, maxlen, initial_len, pt_up_to, verbose=True):
     if verbose: print("Finished with:", len(completed_stack), " solutions!")
     return completed_stack
 
-# Enumerate all Sylvester-Gallai designs on npoints points with maximum line 
-# length maxlen. First all two-seeds are enumerated, then those are completed
-# using a set cover algorithm. 
-def enumerate_full_solutions(npoints, maxlen):
-    # initialize the set of relevant lines
+# given a partial design, find all ways to add lines such that a specified point
+# contains a complete pencil
+def enumerate_saturations(psol, point_saturate, known_hashes = set([])):
+    n  = psol.num_points
+    maxlen = n//2 + 1
+
+    # make relevant lines 
+    # note: if necessary, we can get a speed up by moving this to 
+    # `enumerate_full_solutions' function)
     all_lines_with_len, lines_through_each_with_len = make_all_lines(n)
 
+    pts_to_cover = [i for i in range(n) if \
+    i != point_saturate and psol.has_line[point_saturate, i] == False]
 
-find_all_seeds(16, 9, 4, 2)
+    underlying_set = set(range(len(pts_to_cover)))
+    valid_lines = []
+    for l in range(3, maxlen+1):
+        choices = lines_through_each_with_len[point_saturate][l]
+        for c in choices:
+            if psol.can_add(c):
+                valid_lines.append(c)  
+
+    # Y is the set of covering sets
+    Y = {}
+    for i,l in enumerate(valid_lines):
+        Y[i] = []
+        for j in l:
+            if j == point_saturate:
+                continue
+            else:
+                pind = pts_to_cover.index(j)
+                Y[i].append(pind)
+
+    # X1 and Y1 are disctionaries on which we an run algorithm X
+    X1, Y1 = make_inputs(underlying_set, Y)
+    all_saturations = []
+
+    for s in solve(X1, Y1):
+        add_lines = [valid_lines[j] for j in s]
+        h = make_identifier_hash_linelist(n, psol.lines + add_lines)
+        if h not in known_hashes:
+            known_hashes.add(h)
+            new_pd = copy.deepcopy(psol)
+            for l in add_lines:
+                new_pd.add_line(l)
+            # print("num total full sol:", len(known_hashes_full))
+            all_saturations.append(new_pd)
+    return all_saturations
+
+def all_full_completions(psol, known_hashes_full, minlen = 3):
+    n  = psol.num_points
+    maxlen = n//2 + 1
+
+    # make relevant lines 
+    # note: if necessary, we can get a speed up by moving this to 
+    # `enumerate_full_solutions' function)
+    all_lines_with_len, lines_through_each_with_len = make_all_lines(n)
+
+    all_pairs = []
+    # add all pairs that don't already have a line
+    for i in range(2,n):
+        for j in range(i+1,n):
+            if not psol.has_line[i,j]:
+                all_pairs.append((i,j))
+    underlying_set = set(range(len(all_pairs)))
+
+    valid_lines = []
+    for l in range(minlen, maxlen+1):
+        choices = all_lines_with_len[l]
+        for c in choices:
+            if psol.can_add(c):
+                valid_lines.append(c)  
+
+    # Y is the set of covering sets
+    Y = {}
+    for i,l in enumerate(valid_lines):
+        Y[i] = []
+        for i1 in l:
+            for i2 in l:
+                if i1 >= i2:
+                    continue
+                if i1 <= 1 or i2 <= 1:
+                    continue
+                pind = all_pairs.index((i1,i2))
+                # print(i, l, i1, i2, pind)
+                Y[i].append(pind)
+
+    # X1 and Y1 are disctionaries on which we an run algorithm X
+    X1, Y1 = make_inputs(underlying_set, Y)
+    all_completions = []
+    for s in solve(X1, Y1):
+        add_lines = [valid_lines[j] for j in s]
+        h = make_identifier_hash_linelist(n, psol.lines + add_lines)
+        if h not in known_hashes_full:
+            known_hashes_full.add(h)
+            new_pd = copy.deepcopy(psol)
+            for l in add_lines:
+                new_pd.add_line(l)
+            # print("num total full sol:", len(known_hashes_full))
+            all_completions.append(new_pd)
+    return all_completions
+
+
+# Enumerate all Sylvester-Gallai designs on npoints points with minimum line 
+# length 3. 
+def enumerate_full_solutions_min3(npoints):
+    print(("Finding Sylvester-Gallai designs on {} points " + 
+        "with min length three").format(npoints))
+    maxlen = npoints // 2 + 1
+
+    # first find seeds on 2 vertices
+    all_seeds = find_all_seeds(npoints, 3, 2)
+
+    # then add seeds on the 3rd vertex also on the initial line on 3 vertices
+    all_line_completions = []
+    known_hashes_first_line = set([])
+    for i,s in enumerate(all_seeds):
+        print("Completing first line:", i, '/', len(all_seeds), ':',
+            len(known_hashes_first_line))
+        all_line_completions += enumerate_saturations(s, 2, 
+            known_hashes_first_line)
+
+    print("Found first line completions:", len(all_line_completions))
+
+    # finally find all completions our set of seeds
+    all_sg_completions = []
+    known_full_hashes = set([])
+    for i,s in enumerate(all_line_completions):
+        print("Completing full design:", i, '/', len(all_line_completions), ':',
+            len(known_full_hashes))
+        all_sg_completions += all_full_completions(s, known_full_hashes)
+
+    print("Found full designs:", len(all_sg_completions))
+    return all_sg_completions
+
+# Enumerate all Sylvester-Gallai designs on npoints points with minimum line 
+# length greater than or equal to 4. 
+def enumerate_full_solutions_min4(npoints):
+    print(("Finding Sylvester-Gallai designs on {} points " + 
+            "with min length four or more").format(npoints))    
+    maxlen = npoints // 2 + 1
+    all_seeds = []
+
+    # first find all seeds, saturating an initial lin with minlen points
+    for minlen in range(4, maxlen):
+        all_seeds += find_all_seeds(npoints, minlen, minlen)
+
+    all_sg_completions = []
+    known_full_hashes = set([])
+
+    # then find all completions of the seeds, making sure to use lines 
+    # of length at least four
+    for i,s in enumerate(all_seeds):
+        print("Completing full design:", i, '/', len(all_seeds), ':',
+            len(known_full_hashes))
+        all_sg_completions += all_full_completions(s, known_full_hashes, 4)
+        
+
+    print("Found full designs with min length at least four:", 
+        len(all_sg_completions))
+    return all_sg_completions
+
+def enumerate_all_sg_designs(npoints):
+    designs_big = enumerate_full_solutions_min4(npoints)
+    designs_three = enumerate_full_solutions_min3(npoints)
+    return designs_big + designs_three
+
+
+# make all solutions for 7 through 16 points, and save them all to files
+for npoints in range(7, 17):
+    print("------------------\nFINDING ALL DESIGNS: {}\n------------".format(npoints))
+    my_solutions = enumerate_all_sg_designs(npoints)
+
+    with open("saved_classification/all_unique_sg_{}.txt".format(npoints), "w") as dataf:
+        dataf.write("All unique sylvester gallai designs on {} points\n".format(npoints))
+        for i, pd in enumerate(my_solutions):
+            dataf.write("Sylvester Gallai design " + str(i+1) + "/" + str(len(my_solutions)) + "\n")
+            for l in pd.lines:
+                dataf.write(str(l))
+                dataf.write("\n")
+            dataf.write("\n")
+
+    all_trips = [pd.lines for pd in my_solutions]
+    with open("saved_classification/all_unique_sg_{}.dill".format(npoints), "wb") as dillf:
+        dill.dump(all_trips, dillf)
