@@ -1,0 +1,1 @@
+All unique sylvester gallai designs on 8 points

@@ -1,0 +1,15 @@
+All unique sylvester gallai designs on 9 points
+Sylvester Gallai design 1/1
+(0, 1, 2)
+(0, 3, 4)
+(0, 5, 6)
+(0, 7, 8)
+(1, 3, 5)
+(1, 4, 7)
+(1, 6, 8)
+(2, 3, 8)
+(2, 5, 7)
+(2, 4, 6)
+(3, 6, 7)
+(4, 5, 8)
+
