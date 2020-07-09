@@ -7,6 +7,10 @@ import numpy as np
 import copy
 from solve_exact_cover import *
 import dill
+import sys
+import multiprocessing
+from multiprocessing import Pool
+
 
 """
 PartialDesign class for recording point-line designs
@@ -365,7 +369,9 @@ def enumerate_saturations(psol, point_saturate, known_hashes = set([])):
             all_saturations.append(new_pd)
     return all_saturations
 
-def all_full_completions(psol, known_hashes_full, minlen = 3):
+def all_full_completions(psol, known_hashes_full = None, minlen = 3):
+    if known_hashes_full == None:
+        known_hashes_full = set([])
     n  = psol.num_points
     maxlen = n//2 + 1
 
@@ -418,10 +424,29 @@ def all_full_completions(psol, known_hashes_full, minlen = 3):
             all_completions.append(new_pd)
     return all_completions
 
+def find_all_completions_multithreaded(seeds, batchsize=1000):
+    p = Pool(multiprocessing.cpu_count())
+    # print("Finding all completions using multithreading")
+    known_completions = {}
+    for i in range(0, len(seeds), batchsize):
+        batch = seeds[i:(i+batchsize)]
+        completions_indiv = p.map(all_full_completions, batch)
+        all_comp = []
+        for c in completions_indiv:
+            all_comp += c
+        for s in all_comp:
+            known_completions[make_identifier_hash(s)] = s
+
+        print("Finished batch {}/{} with {} seeds, found {} solutions, {} sol total".\
+            format(i//batchsize, len(seeds)//batchsize, batchsize, 
+                len(all_comp), len(known_completions)))
+
+    return list(known_completions.values())
+
 
 # Enumerate all Sylvester-Gallai designs on npoints points with minimum line 
 # length 3. 
-def enumerate_full_solutions_min3(npoints):
+def enumerate_full_solutions_min3(npoints, multithreaded = False):
     print(("Finding Sylvester-Gallai designs on {} points " + 
         "with min length three").format(npoints))
     maxlen = npoints // 2 + 1
@@ -442,11 +467,17 @@ def enumerate_full_solutions_min3(npoints):
 
     # finally find all completions our set of seeds
     all_sg_completions = []
-    known_full_hashes = set([])
-    for i,s in enumerate(all_line_completions):
-        print("Completing full design:", i, '/', len(all_line_completions), ':',
-            len(known_full_hashes))
-        all_sg_completions += all_full_completions(s, known_full_hashes)
+    if not multithreaded:
+        known_full_hashes = set([])
+        for i,s in enumerate(all_line_completions):
+            print("Completing full design:", i, '/', len(all_line_completions), ':',
+                len(known_full_hashes))
+            all_sg_completions += all_full_completions(s, known_full_hashes)
+    else:
+        print("Finding all completions using multithreading, {} cpus.".format(\
+            multiprocessing.cpu_count()))
+        all_sg_completions = find_all_completions_multithreaded(\
+            all_line_completions)
 
     print("Found full designs:", len(all_sg_completions))
     return all_sg_completions
@@ -478,16 +509,13 @@ def enumerate_full_solutions_min4(npoints):
         len(all_sg_completions))
     return all_sg_completions
 
-def enumerate_all_sg_designs(npoints):
+def enumerate_all_sg_designs(npoints, multithreaded = False):
     designs_big = enumerate_full_solutions_min4(npoints)
-    designs_three = enumerate_full_solutions_min3(npoints)
+    designs_three = enumerate_full_solutions_min3(npoints, multithreaded)
     return designs_big + designs_three
 
-
-# make all solutions for 7 through 16 points, and save them all to files
-for npoints in range(7, 17):
-    print("------------------\nFINDING ALL DESIGNS: {}\n------------".format(npoints))
-    my_solutions = enumerate_all_sg_designs(npoints)
+def compute_and_save(npoints, multithreaded = False):
+    my_solutions = enumerate_all_sg_designs(npoints, multithreaded)
 
     with open("saved_classification/all_unique_sg_{}.txt".format(npoints), "w") as dataf:
         dataf.write("All unique sylvester gallai designs on {} points\n".format(npoints))
@@ -501,3 +529,51 @@ for npoints in range(7, 17):
     all_trips = [pd.lines for pd in my_solutions]
     with open("saved_classification/all_unique_sg_{}.dill".format(npoints), "wb") as dillf:
         dill.dump(all_trips, dillf)
+
+
+help_message = "Use this program to classify combinatorial " + \
+               "Sylvester-Gallai designs.\n" + \
+               " -m minimum number of points to solve\n" + \
+               " -M maximum number of points to solve\n" + \
+               " -multi (y/n) choose to enable or disable multithreading. " +\
+                    "Defaults to yes.\n" +  \
+               " -h print this message"
+
+
+
+# make all solutions for 7 through 16 points, and save them all to files
+if __name__ == '__main__':
+    minc = None
+    maxc = None
+    multithreaded = True
+    print_help = False
+    for a, b in zip(sys.argv, sys.argv[1:]):
+        if a == "-m":
+            minc = int(b)
+        if a == '-M':
+            maxc = int(b)
+        if a == '-multi':
+            if b == 'y':
+                multithreaded = True
+            if b == 'f':
+                multithreaded = False
+        if a == '-h' or b == '-h':
+            print_help = True
+
+    if print_help:
+        print(help_message)
+
+
+    if minc == None or maxc == None:
+        print("Not creating any solutions")
+        exit()
+
+    print("Creating and saving solutions for {} <= n <= {}".format(minc, maxc))
+
+    for npoints in range(minc, maxc+1):
+        print("------------------\nFINDING ALL DESIGNS: {}\n------------".format(npoints))
+        compute_and_save(npoints, multithreaded)
+
+    #     all_trips = [pd.lines for pd in my_solutions]
+    #     with open("saved_classification/all_unique_sg_{}.dill".format(npoints), "wb") as dillf:
+    #         dill.dump(all_trips, dillf)
